@@ -712,8 +712,8 @@ fn capture_screenshot<R: Runtime>(app: AppHandle<R>) {
     let dest_str = dest_path.to_string_lossy().to_string().replace('\\', "\\\\");
 
     // Interactive screenshot: PowerShell transparent overlay for area selection.
-    // Creates a full-screen crosshair overlay, user drags to select region,
-    // then captures exactly that area via CopyFromScreen.
+    // Uses Cursor.Position (physical screen coords, not form client coords) to
+    // avoid DPI-scaling offset. Draws a dashed red rectangle during drag for feedback.
     let script = format!(
         r#"
 Add-Type -AssemblyName System.Windows.Forms
@@ -730,25 +730,46 @@ $form.Cursor = 'Cross'
 $form.BackColor = 'Black'
 $form.Opacity = 0.3
 $form.ShowInTaskbar = $false
-$form.TopMost = $true
+$form.DoubleBuffered = $true
 
 $form.Add_MouseDown({{
     param($s,$e)
-    $script:startX=$e.X; $script:startY=$e.Y
-    $script:endX=$e.X; $script:endY=$e.Y
+    $pos = [System.Windows.Forms.Cursor]::Position
+    $script:startX=$pos.X; $script:startY=$pos.Y
+    $script:endX=$pos.X; $script:endY=$pos.Y
     $script:isDragging=$true
 }})
 
 $form.Add_MouseMove({{
     param($s,$e)
-    if ($script:isDragging) {{ $script:endX=$e.X; $script:endY=$e.Y }}
+    if ($script:isDragging) {{
+        $pos = [System.Windows.Forms.Cursor]::Position
+        $script:endX=$pos.X; $script:endY=$pos.Y
+        $form.Invalidate()
+    }}
 }})
 
 $form.Add_MouseUp({{
     param($s,$e)
+    $pos = [System.Windows.Forms.Cursor]::Position
+    $script:endX=$pos.X; $script:endY=$pos.Y
     $script:isDragging=$false
-    $script:endX=$e.X; $script:endY=$e.Y
     $form.Close()
+}})
+
+$form.Add_Paint({{
+    param($s,$e)
+    if (-not $script:isDragging) {{ return }}
+    $x = [Math]::Min($script:startX, $script:endX)
+    $y = [Math]::Min($script:startY, $script:endY)
+    $w = [Math]::Abs($script:endX - $script:startX)
+    $h = [Math]::Abs($script:endY - $script:startY)
+    if ($w -gt 0 -and $h -gt 0) {{
+        $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Red, 2)
+        $pen.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash
+        $e.Graphics.DrawRectangle($pen, $x, $y, $w, $h)
+        $pen.Dispose()
+    }}
 }})
 
 [void]$form.ShowDialog()
@@ -944,6 +965,7 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
     let ffmpeg_path = ffmpeg_path.unwrap();
 
     RECORDING_ACTIVE.store(true, Ordering::SeqCst);
+    let _ = app.emit("recording-status", serde_json::json!({ "active": true }));
     let stop_text = get_text("stop_recording", &get_stored_locale());
     let _ = record_item.set_text(&stop_text);
 
@@ -983,12 +1005,14 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
             }
             Err(_) => {
                 RECORDING_ACTIVE.store(false, Ordering::SeqCst);
+                let _ = app_clone.emit("recording-status", serde_json::json!({ "active": false }));
                 let resume_text = get_text("screen_recording", &get_stored_locale());
                 let _ = record_item_clone.set_text(&resume_text);
                 return;
             }
         };
 
+        let _ = app_clone.emit("recording-status", serde_json::json!({ "active": false }));
         let status = child.wait();
         RECORDING_PID.store(0, Ordering::SeqCst);
         RECORDING_ACTIVE.store(false, Ordering::SeqCst);

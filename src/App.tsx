@@ -10,6 +10,7 @@ import TitleBar from "./components/TitleBar";
 import MainLayout from "./components/MainLayout";
 import SettingsPanel from "./components/SettingsPanel";
 import AiResultPopup from "./components/AiResultPopup";
+import RecordingIndicator from "./components/RecordingIndicator";
 
 let currentLabel = "main";
 try {
@@ -139,6 +140,9 @@ export default function App() {
 
       {/* AI result popup — at root level so it centers on viewport */}
       <AiResultPopup />
+
+      {/* Recording indicator */}
+      <RecordingIndicator />
     </div>
   );
 }
