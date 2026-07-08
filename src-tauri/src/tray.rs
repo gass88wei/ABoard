@@ -1020,7 +1020,7 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
             .stdin(std::process::Stdio::piped())
             .spawn()
         {
-            Ok(c) => {
+            Ok(mut c) => {
                 RECORDING_PID.store(c.id(), Ordering::SeqCst);
                 *RECORDING_STDIN.lock().unwrap() = c.stdin.take();
                 c
