@@ -201,11 +201,13 @@ return "OK"
 
     #[cfg(target_os = "windows")]
     {
-        // Copy the actual file to clipboard using CF_HDROP via arboard directly
-        let mut cb = arboard::Clipboard::new()
-            .map_err(|e| format!("arboard init error: {}", e))?;
-        cb.set_files(vec![&abs])
-            .map_err(|e| format!("arboard set_files error: {}", e))?;
+        // Copy the actual file to clipboard using CF_HDROP via clipboard-win
+        use clipboard_win::{Clipboard, formats};
+        let _clip = Clipboard::new_attempts(10)
+            .map_err(|e| format!("clipboard-win open error: {}", e))?;
+        let path_str = abs.to_str().ok_or("Invalid path")?;
+        formats::set_files(&_clip, &[path_str])
+            .map_err(|e| format!("clipboard-win set_files error: {}", e))?;
         Ok(())
     }
 
