@@ -1072,7 +1072,6 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
                 }));
                 let _ = std::fs::remove_file(&dest_path);
             }
-        }
     });
 }
 
