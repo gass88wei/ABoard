@@ -7,53 +7,57 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-      - run: npm ci
-      - name: Build (Windows)
-        if: matrix.os == 'windows-latest'
-        run: npm run tauri build
-      - name: Build + sign (macOS)
-        if: matrix.os == 'macos-latest'
-        run: npm run build:macos
-      - name: Upload bundles
-        uses: actions/upload-artifact@v4
-        with:
-          name: aboard-${{ matrix.os }}
-          path: src-tauri/target/release/bundle/
-
   release:
-    needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
-      - name: List artifacts
+      - uses: actions/checkout@v4
+
+      - name: Find CI run for this commit
+        id: find-ci
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          ls -la aboard-macos-latest/
-          echo "---"
-          ls -la aboard-windows-latest/
+          SHA=$(git rev-parse HEAD)
+          RUN_ID=$(gh run list --workflow CI --branch main --limit 3 \
+            --json databaseId,headSha,status,conclusion \
+            --jq '.[] | select(.headSha=="'"$SHA"'" and .status=="completed" and .conclusion=="success") | .databaseId' \
+            | head -1)
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful CI run found for commit $SHA" >&2
+            exit 1
+          fi
+          echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Found CI run: $RUN_ID"
+
+      - name: Download Windows bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: aboard-windows-latest
+          path: bundles/windows
+          run-id: ${{ steps.find-ci.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Download macOS bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: aboard-macos-latest
+          path: bundles/macos
+          run-id: ${{ steps.find-ci.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: List bundles
+        run: |
+          echo "=== Windows ==="
+          ls -la bundles/windows/ || echo "(empty)"
+          echo "=== macOS ==="
+          ls -la bundles/macos/ || echo "(empty)"
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            aboard-macos-latest/**/*
-            aboard-windows-latest/**/*
+            bundles/**/*
           generate_release_notes: true
