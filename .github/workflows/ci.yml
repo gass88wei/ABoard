@@ -76,9 +76,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # Delete existing release for this tag (if any) to avoid asset conflicts
           gh release delete "$TAG" --yes 2>/dev/null || true
-          # Create release and upload all bundles
-          gh release create "$TAG" bundles/**/* \
+          # Only upload regular files (skip macOS .app bundle directory)
+          FILES=$(find bundles -type f | tr '\n' ' ')
+          gh release create "$TAG" $FILES \
             --title "$TAG" \
             --generate-notes
