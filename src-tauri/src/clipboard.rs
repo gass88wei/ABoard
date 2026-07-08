@@ -530,8 +530,9 @@ return ""
 /// Much faster than the PowerShell fallback since no process spawn is needed.
 #[cfg(target_os = "windows")]
 fn try_read_image_direct() -> Option<ClipboardItem> {
+    use std::mem::transmute;
     use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock, HGLOBAL};
 
     const CF_DIB: u32 = 8;
     const CF_DIBV5: u32 = 17;
@@ -550,7 +551,8 @@ fn try_read_image_direct() -> Option<ClipboardItem> {
             },
         };
 
-        let ptr = GlobalLock(handle) as *const u8;
+        let hg: HGLOBAL = transmute(handle);
+        let ptr = GlobalLock(hg) as *const u8;
         if ptr.is_null() {
             let _ = CloseClipboard();
             return None;
@@ -558,7 +560,7 @@ fn try_read_image_direct() -> Option<ClipboardItem> {
 
         let bi_size = *(ptr as *const u32);
         if bi_size < 40 {
-            GlobalUnlock(handle);
+            GlobalUnlock(hg);
             let _ = CloseClipboard();
             return None;
         }
@@ -571,7 +573,7 @@ fn try_read_image_direct() -> Option<ClipboardItem> {
 
         // Only handle uncompressed DIB (BI_RGB=0, BI_BITFIELDS=3)
         if compression != 0 && compression != 3 {
-            GlobalUnlock(handle);
+            GlobalUnlock(hg);
             let _ = CloseClipboard();
             return None;
         }
@@ -597,7 +599,7 @@ fn try_read_image_direct() -> Option<ClipboardItem> {
         bmp.extend_from_slice(&((14 + header_size) as u32).to_le_bytes());
         bmp.extend_from_slice(dib_data);
 
-        GlobalUnlock(handle);
+        GlobalUnlock(hg);
         let _ = CloseClipboard();
 
         let img = image::load_from_memory(&bmp).ok()?;
