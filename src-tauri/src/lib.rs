@@ -201,12 +201,11 @@ return "OK"
 
     #[cfg(target_os = "windows")]
     {
-        use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
         use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
         use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GPTR};
 
-        let wide_path: Vec<u16> = OsStr::new(abs)
+        let wide_path: Vec<u16> = abs.as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
             .chain(std::iter::once(0))
@@ -233,7 +232,7 @@ return "OK"
 
             if OpenClipboard(None).is_err()
                 || EmptyClipboard().is_err()
-                || SetClipboardData(15u32, Some(h)).is_err()
+                || SetClipboardData(15u32, Some(std::mem::transmute::<_, windows::Win32::Foundation::HANDLE>(h))).is_err()
                 || CloseClipboard().is_err()
             {
                 return Err("Clipboard operation failed".into());
