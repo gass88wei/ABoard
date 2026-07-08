@@ -71,7 +71,13 @@ jobs:
           merge-multiple: true
           path: bundles
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: bundles/**/*
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Delete existing release for this tag (if any) to avoid asset conflicts
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          # Create release and upload all bundles
+          gh release create "$TAG" bundles/**/* \
+            --title "$TAG" \
+            --generate-notes
