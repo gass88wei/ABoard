@@ -864,7 +864,7 @@ fn find_ffmpeg_or_download<R: Runtime>(app: &AppHandle<R>, app_data_dir: &Path) 
     };
 
     let _ = app.dialog()
-        .message(&download_msg)
+        .message(download_msg)
         .title(title)
         .kind(tauri_plugin_dialog::MessageDialogKind::Info)
         .show(|_| {});
@@ -909,7 +909,7 @@ try {{
                 return Some(local_ffmpeg);
             }
             let _ = app.dialog()
-                .message(&failed_msg)
+                .message(failed_msg)
                 .title(title)
                 .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
                 .show(|_| {});
@@ -917,7 +917,7 @@ try {{
         }
         Err(_) => {
             let _ = app.dialog()
-                .message(&failed_msg)
+                .message(failed_msg)
                 .title(title)
                 .kind(tauri_plugin_dialog::MessageDialogKind::Warning)
                 .show(|_| {});
