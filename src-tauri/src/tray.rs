@@ -760,10 +760,12 @@ $form.Add_MouseUp({{
 $form.Add_Paint({{
     param($s,$e)
     if (-not $script:isDragging) {{ return }}
-    $x = [Math]::Min($script:startX, $script:endX)
-    $y = [Math]::Min($script:startY, $script:endY)
-    $w = [Math]::Abs($script:endX - $script:startX)
-    $h = [Math]::Abs($script:endY - $script:startY)
+    $startPt = $s.PointToClient((New-Object System.Drawing.Point($script:startX, $script:startY)))
+    $endPt = $s.PointToClient((New-Object System.Drawing.Point($script:endX, $script:endY)))
+    $x = [Math]::Min($startPt.X, $endPt.X)
+    $y = [Math]::Min($startPt.Y, $endPt.Y)
+    $w = [Math]::Abs($endPt.X - $startPt.X)
+    $h = [Math]::Abs($endPt.Y - $startPt.Y)
     if ($w -gt 0 -and $h -gt 0) {{
         $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Red, 2)
         $pen.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash
