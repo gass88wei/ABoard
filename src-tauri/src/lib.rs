@@ -201,11 +201,11 @@ return "OK"
 
     #[cfg(target_os = "windows")]
     {
-        // Copy the actual file to clipboard using CF_HDROP via tauri-plugin-clipboard-manager
-        use tauri_plugin_clipboard_manager::ClipboardExt;
-        app.clipboard()
-            .write_files(vec![abs.to_string_lossy().to_string()])
-            .map_err(|e| format!("Clipboard write files error: {}", e))?;
+        // Copy the actual file to clipboard using CF_HDROP via arboard directly
+        let mut cb = arboard::Clipboard::new()
+            .map_err(|e| format!("arboard init error: {}", e))?;
+        cb.set_files(vec![&abs])
+            .map_err(|e| format!("arboard set_files error: {}", e))?;
         Ok(())
     }
 
