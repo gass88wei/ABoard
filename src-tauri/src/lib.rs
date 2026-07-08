@@ -203,37 +203,41 @@ return "OK"
     {
         use std::ffi::OsStr;
         use std::os::windows::ffi::OsStrExt;
-        use windows::Win32::System::DataExchange::*;
+        use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
         use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GPTR};
-        use windows::Win32::UI::Shell::DROPFILES;
-        use windows::Win32::Foundation::{BOOL, HANDLE};
 
         let wide_path: Vec<u16> = OsStr::new(abs)
             .encode_wide()
             .chain(std::iter::once(0))
             .chain(std::iter::once(0))
             .collect();
-        let dropfiles_size = std::mem::size_of::<DROPFILES>();
+        let dropfiles_size = 20usize; // sizeof(DROPFILES) with packed(1): u32+POINT(i32,i32)+BOOL+BOOL = 4+8+4+4
         let total_bytes = dropfiles_size + wide_path.len() * 2;
 
         unsafe {
-            let h: HANDLE = GlobalAlloc(GPTR, total_bytes)
-                .map_err(|e| format!("GlobalAlloc error: {}", e))?;
+            let h = match GlobalAlloc(GPTR, total_bytes) {
+                Ok(h) => h,
+                Err(e) => return Err(format!("GlobalAlloc error: {}", e)),
+            };
             let p = GlobalLock(h) as *mut u8;
 
-            let df = &mut *(p as *mut DROPFILES);
-            df.pFiles = dropfiles_size as u32;
-            df.fWide = BOOL(1);
+            // Write DROPFILES header: pFiles at offset 0, fWide at offset 16
+            *(p as *mut u32) = dropfiles_size as u32;
+            // pt (offset 4-11) and fNC (offset 12-15) stay zero-initialized
+            *(p.add(16) as *mut i32) = 1; // fWide = TRUE
 
             let src = wide_path.as_ptr() as *const u8;
             std::ptr::copy_nonoverlapping(src, p.add(dropfiles_size), wide_path.len() * 2);
 
             let _ = GlobalUnlock(h);
 
-            OpenClipboard(None)?;
-            EmptyClipboard()?;
-            SetClipboardData(15u32, Some(h))?;
-            CloseClipboard()?;
+            if OpenClipboard(None).is_err()
+                || EmptyClipboard().is_err()
+                || SetClipboardData(15u32, Some(h)).is_err()
+                || CloseClipboard().is_err()
+            {
+                return Err("Clipboard operation failed".into());
+            }
         }
         Ok(())
     }
