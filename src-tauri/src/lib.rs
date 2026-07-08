@@ -397,12 +397,17 @@ pub fn run() {
             // shows traffic lights without a visible title bar.
             #[cfg(not(target_os = "macos"))]
             {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.set_decorations(false);
-                }
-                if let Some(win) = app.get_webview_window("floating") {
-                    let _ = win.set_decorations(false);
-                }
+                // set_decorations can crash on some Windows Webview2 init sequences;
+                // catch any panic so the app still starts.
+                let set_dec = |label: &str| {
+                    if let Some(win) = app.get_webview_window(label) {
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let _ = win.set_decorations(false);
+                        }));
+                    }
+                };
+                set_dec("main");
+                set_dec("floating");
             }
 
             // Intercept floating window close (red dot) — hide instead of destroy.
@@ -455,6 +460,8 @@ pub fn run() {
             db::semantic_search,
             db::export_items,
             db::get_storage_stats,
+            db::get_storage_breakdown,
+            db::delete_items_by_type,
             db::read_data_file,
             db::get_setting,
             db::set_setting,

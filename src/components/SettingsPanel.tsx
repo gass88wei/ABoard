@@ -763,17 +763,21 @@ export default function SettingsPanel(props: Props) {
 
                 <div>
                   <h3 class="text-[11px] font-bold text-gray-500 mb-2 uppercase">{t("settings.storageStatus")}</h3>
-                  <div class="glass-card rounded-xl p-3 h-full flex flex-col justify-between">
+                  <div class="glass-card rounded-xl p-3 flex flex-col justify-between">
                     <div>
                       <div class="text-[10px] text-gray-500 mb-0.5">{t("settings.used")}</div>
                       <div class="flex items-baseline gap-1 mb-1.5">
                         <span class="text-sm font-bold text-gray-700">{formatSize(storageSize())}</span>
                         <span class="text-[10px] text-gray-400">{itemCount()} items</span>
                       </div>
-                      <div class="w-full h-1.5 bg-gray-200/50 rounded-full overflow-hidden">
+                      <div class="w-full h-1.5 bg-gray-200/50 rounded-full overflow-hidden mb-2">
                         <div class="h-full bg-accent rounded-full" style={{ width: `${Math.min(100, (storageSize() / (50 * 1024 * 1024 * 1024)) * 100)}%` }} />
                       </div>
                     </div>
+
+                    {/* Per-type breakdown */}
+                    <StorageBreakdown />
+
                     <button class="w-full mt-2 bg-white/60 hover:bg-white/80 border border-white/80 dark:border-white/10 rounded py-1 text-[10px] text-gray-600 transition-colors shadow-sm disabled:opacity-40"
                       disabled={cleaning()}
                       onClick={async () => {
@@ -1062,6 +1066,87 @@ export default function SettingsPanel(props: Props) {
           </Show>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface TypeInfo {
+  content_type: string;
+  size_bytes: number;
+  count: number;
+}
+
+function StorageBreakdown() {
+  const [types, setTypes] = createSignal<TypeInfo[]>([]);
+  const [deleting, setDeleting] = createSignal<string | null>(null);
+
+  const typeLabels: Record<string, string> = {
+    text: t("settings.type.text"),
+    image: t("settings.type.image"),
+    video: t("settings.type.video"),
+    file: t("settings.type.file"),
+    richtext: t("settings.type.richtext"),
+    html: t("settings.type.html"),
+  };
+
+  const typeIcons: Record<string, string> = {
+    text: "ph ph-text-t",
+    image: "ph ph-image",
+    video: "ph ph-video",
+    file: "ph ph-file",
+    richtext: "ph ph-file-richtext",
+    html: "ph ph-code",
+  };
+
+  const formatSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  };
+
+  const load = async () => {
+    try {
+      const data = await invoke<{ types: TypeInfo[] }>("get_storage_breakdown");
+      setTypes(data.types.filter((t) => t.count > 0));
+    } catch {}
+  };
+
+  onMount(load);
+
+  return (
+    <div class="space-y-1 mb-2">
+      <For each={types()}>
+        {(item) => {
+          const deletingType = deleting;
+          return (
+            <div class="flex items-center gap-2 py-0.5">
+              <i class={`${typeIcons[item.content_type] || "ph ph-question"} text-[10px] text-gray-500`} />
+              <span class="flex-1 text-[10px] text-gray-600 truncate">
+                {typeLabels[item.content_type] || item.content_type}
+              </span>
+              <span class="text-[10px] text-gray-400">{item.count}</span>
+              <span class="text-[10px] font-medium text-gray-700 tabular-nums">{formatSize(item.size_bytes)}</span>
+              <button
+                class="text-[9px] text-red-400 hover:text-red-600 transition-colors disabled:opacity-30"
+                disabled={deletingType() === item.content_type}
+                onClick={async () => {
+                  setDeleting(item.content_type);
+                  try {
+                    await invoke("delete_items_by_type", { contentType: item.content_type });
+                    await load();
+                    await loadStorageStats();
+                    await loadHistory();
+                  } catch {}
+                  setDeleting(null);
+                }}
+              >
+                {deletingType() === item.content_type ? "..." : t("settings.clear")}
+              </button>
+            </div>
+          );
+        }}
+      </For>
     </div>
   );
 }

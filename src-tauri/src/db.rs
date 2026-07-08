@@ -438,6 +438,45 @@ pub fn delete_items(
     Ok(())
 }
 
+/// Delete all items of a given content_type. Returns count of deleted items.
+#[tauri::command]
+pub fn delete_items_by_type(
+    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
+    content_type: String,
+) -> Result<i64, String> {
+    let conn = state.conn.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let file_paths: Vec<String> = conn
+        .prepare("SELECT file_path FROM clipboard_items WHERE content_type = ?1")
+        .map_err(|e| format!("Query error: {}", e))?
+        .query_map(rusqlite::params![&content_type], |row| {
+            let fp: String = row.get(0).unwrap_or_default();
+            Ok(fp)
+        })
+        .map_err(|e| format!("Query error: {}", e))?
+        .flatten()
+        .collect();
+
+    let count = conn
+        .execute("DELETE FROM clipboard_items WHERE content_type = ?1", rusqlite::params![&content_type])
+        .map_err(|e| format!("Delete error: {}", e))?;
+
+    drop(conn);
+
+    if !file_paths.is_empty() {
+        if let Ok(app_data_dir) = app.path().app_data_dir() {
+            for rel_path in file_paths {
+                if !rel_path.is_empty() {
+                    let full_path = app_data_dir.join(&rel_path);
+                    let _ = std::fs::remove_file(full_path);
+                }
+            }
+        }
+    }
+
+    Ok(count as i64)
+}
+
 /// Delete unpinned items older than N days. Returns count of deleted items.
 #[tauri::command]
 pub fn clean_old_items(
@@ -725,6 +764,55 @@ pub fn get_storage_stats(app: tauri::AppHandle) -> Result<serde_json::Value, Str
         "db_size_bytes": total_size,
         "item_count": item_count,
         "breakdown": breakdown,
+    }))
+}
+
+/// Return per-content_type storage breakdown (file sizes + counts).
+#[tauri::command]
+pub fn get_storage_breakdown(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DbState>,
+) -> Result<serde_json::Value, String> {
+    let app_data_dir = app.path().app_data_dir()
+        .map_err(|e| format!("App data dir error: {}", e))?;
+    let data_dir = app_data_dir.join("data");
+
+    let conn = state.conn.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    let mut stmt = conn
+        .prepare("SELECT content_type, file_path, LENGTH(content) FROM clipboard_items")
+        .map_err(|e| format!("Query error: {}", e))?;
+
+    let mut types: std::collections::BTreeMap<String, (u64, u64)> = std::collections::BTreeMap::new();
+
+    if let Ok(rows) = stmt.query_map([], |row| {
+        let ctype: String = row.get(0).unwrap_or_else(|_| "unknown".into());
+        let fpath: Option<String> = row.get(1).ok();
+        let content_len: i64 = row.get(2).unwrap_or(0);
+        Ok((ctype, fpath, content_len))
+    }) {
+        for row in rows.flatten() {
+            let (ctype, fpath, content_len) = row;
+            let file_size = if let Some(ref path) = fpath {
+                let full = data_dir.join(path.trim_start_matches("data/"));
+                std::fs::metadata(&full).map(|m| m.len()).unwrap_or(content_len as u64)
+            } else {
+                content_len as u64
+            };
+            let entry = types.entry(ctype).or_insert((0, 0));
+            entry.0 += file_size;
+            entry.1 += 1;
+        }
+    }
+
+    let total_size: u64 = types.values().map(|(s, _)| s).sum();
+    let total_count: u64 = types.values().map(|(_, c)| c).sum();
+
+    Ok(serde_json::json!({
+        "total_size_bytes": total_size,
+        "total_count": total_count,
+        "types": types.into_iter().map(|(k, (size, count))| {
+            serde_json::json!({ "content_type": k, "size_bytes": size, "count": count })
+        }).collect::<Vec<_>>(),
     }))
 }
 

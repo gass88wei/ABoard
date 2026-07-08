@@ -841,10 +841,10 @@ fn stop_recording() {
         // Send 'q' to ffmpeg stdin for clean shutdown instead of taskkill
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        // Try graceful stop first: write 'q' to ffmpeg stdin
-        // (stdin pipe is lost in the spawned thread, so use taskkill without /F)
+        // ffmpeg gdigrab has no visible window so WM_CLOSE (taskkill without /F)
+        // is never received — use /F to force terminate.
         let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string()])
+            .args(["/F", "/PID", &pid.to_string()])
             .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
@@ -1053,7 +1053,13 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
                     "pinned": false,
                     "file_path": file_path_str,
                 }));
+                let _ = app_clone.emit("recording-complete", serde_json::json!({
+                    "success": true
+                }));
             } else {
+                let _ = app_clone.emit("recording-complete", serde_json::json!({
+                    "success": false
+                }));
                 let _ = std::fs::remove_file(&dest_path);
             }
         }
