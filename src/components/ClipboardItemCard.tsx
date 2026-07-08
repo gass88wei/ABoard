@@ -109,6 +109,7 @@ interface Props {
 
 export default function ClipboardItemCard(props: Props) {
   const [hovered, setHovered] = createSignal(false);
+  const [resolvedSrc, setResolvedSrc] = createSignal<string | null>(null);
   const [videoThumb, setVideoThumb] = createSignal<string | null>(null);
   const [showVideoPlayer, setShowVideoPlayer] = createSignal(false);
   const tags = () => (props.item.ai_tags || []).filter((t) => t.length >= 2 && !/^[\s\p{P}\p{S}]+$/u.test(t));
@@ -118,16 +119,26 @@ export default function ClipboardItemCard(props: Props) {
   const query = () => props.searchQuery ?? "";
   const isDuplicate = () => (props.item.ai_tags || []).includes("duplicate");
 
-  // aboard-file:// URLs allowed by CSP; protocol handler serves them directly
-  const imageSrc = () => props.item.content;
+  // Resolve image source: use `resolvedSrc` (data URL from read_data_file) when available,
+  // falling back to aboard-file:// protocol handler URL or raw content.
+  const imageSrc = () => resolvedSrc() || props.item.content;
 
   onMount(() => {
+    // Image: load persisted image via read_data_file command → data URL
+    if (props.item.type === "image" && props.item.file_path) {
+      getItemContent(props.item).then((content) => {
+        if (content.startsWith("data:")) {
+          setResolvedSrc(content);
+        }
+      }).catch(() => {});
+    }
+
     // Video: generate and load thumbnail
     if (props.item.type === "video" && props.item.file_path) {
       invoke<string>("generate_video_thumbnail", { itemId: props.item.id })
         .then((relPath) => {
           if (relPath) {
-            setVideoThumb(`aboard-file://${relPath}`);
+            setVideoThumb(`aboard-file:///${relPath}`);
           }
         })
         .catch(() => {});
@@ -355,7 +366,7 @@ export default function ClipboardItemCard(props: Props) {
           >
             <div class="w-full max-w-[320px]" onClick={(e) => e.stopPropagation()}>
               <video
-                src={props.item.file_path ? `aboard-file://${props.item.file_path}` : ""}
+                src={props.item.file_path ? `aboard-file:///${props.item.file_path}` : ""}
                 controls
                 autoplay
                 class="w-full rounded-lg"
@@ -450,11 +461,11 @@ export default function ClipboardItemCard(props: Props) {
         >
           <div class="w-full max-w-[280px]" onClick={(e) => e.stopPropagation()}>
             <video
-              src={props.item.file_path ? `aboard-file://${props.item.file_path}` : ""}
-              controls
-              autoplay
-              class="w-full rounded-lg"
-              style={{ "max-height": "200px" }}
+                src={props.item.file_path ? `aboard-file:///${props.item.file_path}` : ""}
+                controls
+                autoplay
+                class="w-full rounded-lg"
+                style={{ "max-height": "200px" }}
             />
             <button class="mt-2 text-xs text-white/70 hover:text-white transition-colors"
               onClick={(e) => { e.stopPropagation(); setShowVideoPlayer(false); }}

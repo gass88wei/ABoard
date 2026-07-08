@@ -163,7 +163,7 @@ function normalizeItem(raw: Record<string, unknown>): ClipboardItem {
   // For image items with file_path, convert to displayable URL
   let content = raw.content as string;
   if (contentType === "image" && filePath && !content.startsWith("data:")) {
-    content = `aboard-file://${filePath}`;
+    content = `aboard-file:///${filePath}`;
   }
 
   return {

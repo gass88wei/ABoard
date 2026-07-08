@@ -525,94 +525,66 @@ return ""
     None
 }
 
-/// Windows: Read DIB/DIBV5 image directly from clipboard using the windows crate.
+/// Windows: Read DIB/DIBV5 image directly from clipboard using clipboard-win.
 /// Catches screenshots (PrtScn / Win+Shift+S) that Tauri's clip plugin can't read.
 /// Much faster than the PowerShell fallback since no process spawn is needed.
 #[cfg(target_os = "windows")]
 fn try_read_image_direct() -> Option<ClipboardItem> {
-    use std::mem::transmute;
-    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock, HGLOBAL};
+    use clipboard_win::formats;
 
-    const CF_DIB: u32 = 8;
-    const CF_DIBV5: u32 = 17;
-
-    unsafe {
-        if OpenClipboard(None).is_err() {
-            return None;
-        }
-
-        // Try DIBV5 first (richer format), fall back to DIB
-        let handle = match GetClipboardData(CF_DIBV5) {
-            Ok(h) if !h.0.is_null() => h,
-            _ => match GetClipboardData(CF_DIB) {
-                Ok(h) if !h.0.is_null() => h,
-                _ => { let _ = CloseClipboard(); return None; }
-            },
-        };
-
-        let hg: HGLOBAL = transmute(handle);
-        let ptr = GlobalLock(hg) as *const u8;
-        if ptr.is_null() {
-            let _ = CloseClipboard();
-            return None;
-        }
-
-        let bi_size = *(ptr as *const u32);
-        if bi_size < 40 {
-            GlobalUnlock(hg);
-            let _ = CloseClipboard();
-            return None;
-        }
-
-        let width = *(ptr.add(4) as *const i32);
-        let height = *(ptr.add(8) as *const i32);
-        let bit_count = *(ptr.add(14) as *const u16);
-        let compression = *(ptr.add(16) as *const u32);
-        let bi_size_image = *(ptr.add(20) as *const u32);
-
-        // Only handle uncompressed DIB (BI_RGB=0, BI_BITFIELDS=3)
-        if compression != 0 && compression != 3 {
-            GlobalUnlock(hg);
-            let _ = CloseClipboard();
-            return None;
-        }
-
-        let header_size = bi_size as usize;
-        let abs_height = height.abs() as u32;
-        let bpp = bit_count as u32;
-        let row_size = ((width.max(0) as u32 * bpp + 31) / 32) * 4;
-        let pixel_data_size = if bi_size_image != 0 {
-            bi_size_image as usize
-        } else {
-            row_size as usize * abs_height as usize
-        };
-        let total_dib_size = header_size + pixel_data_size;
-        let dib_data = std::slice::from_raw_parts(ptr, total_dib_size);
-
-        // Wrap DIB in a BMP file (prepend BITMAPFILEHEADER)
-        let bmp_size = 14 + total_dib_size;
-        let mut bmp = Vec::with_capacity(bmp_size);
-        bmp.extend_from_slice(b"BM");
-        bmp.extend_from_slice(&(bmp_size as u32).to_le_bytes());
-        bmp.extend_from_slice(&[0u8; 4]);
-        bmp.extend_from_slice(&((14 + header_size) as u32).to_le_bytes());
-        bmp.extend_from_slice(dib_data);
-
-        GlobalUnlock(hg);
-        let _ = CloseClipboard();
-
-        let img = image::load_from_memory(&bmp).ok()?;
-        let rgba = img.to_rgba8();
-        let (w, h) = rgba.dimensions();
-
-        if rgba.len() > MAX_IMAGE_SIZE {
-            eprintln!("[clipboard] Skipping oversized DIB image ({} bytes)", rgba.len());
-            return None;
-        }
-
-        encode_and_build_item(&rgba, w, h)
+    // Try DIBV5 first (richer format, used by Win+Shift+S), fall back to DIB
+    let mut buf = Vec::new();
+    let ok = formats::RawData(formats::CF_DIBV5).read_clipboard(&mut buf);
+    if ok.is_err() || buf.len() < 40 {
+        buf.clear();
+        formats::RawData(formats::CF_DIB).read_clipboard(&mut buf).ok()?;
     }
+    if buf.len() < 40 {
+        return None;
+    }
+
+    // Parse BITMAPINFOHEADER
+    let bi_size = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    let width = i32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    let height = i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+    let bit_count = u16::from_le_bytes([buf[14], buf[15]]);
+    let compression = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
+    let bi_size_image = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+    if compression != 0 && compression != 3 {
+        return None;
+    }
+
+    let abs_height = height.abs() as u32;
+    let bpp = bit_count as u32;
+    let row_size = ((width.max(0) as u32 * bpp + 31) / 32) * 4;
+    let pixel_data_size = if bi_size_image != 0 {
+        bi_size_image as usize
+    } else {
+        row_size as usize * abs_height as usize
+    };
+    let total_dib_size = bi_size + pixel_data_size;
+    let dib = &buf[..total_dib_size];
+
+    // Wrap DIB in a BMP file (prepend BITMAPFILEHEADER)
+    let bmp_size = 14 + total_dib_size;
+    let mut bmp = Vec::with_capacity(bmp_size);
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&(bmp_size as u32).to_le_bytes());
+    bmp.extend_from_slice(&[0u8; 4]);
+    bmp.extend_from_slice(&((14 + bi_size) as u32).to_le_bytes());
+    bmp.extend_from_slice(dib);
+
+    let img = image::load_from_memory(&bmp).ok()?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+
+    if rgba.len() > MAX_IMAGE_SIZE {
+        eprintln!("[clipboard] Skipping oversized DIB image ({} bytes)", rgba.len());
+        return None;
+    }
+
+    encode_and_build_item(&rgba, w, h)
 }
 
 /// Windows fallback: read image via PowerShell System.Windows.Forms.
