@@ -201,13 +201,40 @@ return "OK"
 
     #[cfg(target_os = "windows")]
     {
-        // Copy the actual file to clipboard using CF_HDROP via clipboard-win
-        use clipboard_win::{Clipboard, formats};
-        let _clip = Clipboard::new_attempts(10)
-            .map_err(|e| format!("clipboard-win open error: {}", e))?;
-        let path_str = abs.to_str().ok_or("Invalid path")?;
-        formats::set_files(&_clip, &[path_str])
-            .map_err(|e| format!("clipboard-win set_files error: {}", e))?;
+        use std::ffi::OsStr;
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::System::DataExchange::*;
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GPTR};
+        use windows::Win32::UI::Shell::DROPFILES;
+        use windows::Win32::Foundation::{BOOL, HANDLE};
+
+        let wide_path: Vec<u16> = OsStr::new(abs)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .chain(std::iter::once(0))
+            .collect();
+        let dropfiles_size = std::mem::size_of::<DROPFILES>();
+        let total_bytes = dropfiles_size + wide_path.len() * 2;
+
+        unsafe {
+            let h: HANDLE = GlobalAlloc(GPTR, total_bytes)
+                .map_err(|e| format!("GlobalAlloc error: {}", e))?;
+            let p = GlobalLock(h) as *mut u8;
+
+            let df = &mut *(p as *mut DROPFILES);
+            df.pFiles = dropfiles_size as u32;
+            df.fWide = BOOL(1);
+
+            let src = wide_path.as_ptr() as *const u8;
+            std::ptr::copy_nonoverlapping(src, p.add(dropfiles_size), wide_path.len() * 2);
+
+            let _ = GlobalUnlock(h);
+
+            OpenClipboard(None)?;
+            EmptyClipboard()?;
+            SetClipboardData(15u32, Some(h))?;
+            CloseClipboard()?;
+        }
         Ok(())
     }
 
