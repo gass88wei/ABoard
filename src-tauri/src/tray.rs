@@ -5,6 +5,7 @@ use tauri::{
 };
 use tauri_plugin_dialog::DialogExt;
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::Mutex;
@@ -42,6 +43,9 @@ static RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// PID of the active screencapture recording process, for stopping.
 static RECORDING_PID: AtomicU32 = AtomicU32::new(0);
+
+/// Stdin handle for sending 'q' to ffmpeg for graceful shutdown.
+static RECORDING_STDIN: Mutex<Option<std::process::ChildStdin>> = Mutex::new(None);
 
 /// Stored locale: 0 = zh, 1 = en
 static STORED_LOCALE: AtomicU8 = AtomicU8::new(0);
@@ -584,7 +588,7 @@ fn capture_screenshot<R: Runtime>(app: AppHandle<R>) {
                 let _ = app.emit("clipboard-update", serde_json::json!({
                     "id": id,
                     "type": "image",
-                    "content": format!("data:image/png;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)),
+                    "content": "",
                     "hash": hash,
                     "timestamp": timestamp,
                     "metadata": {},
@@ -832,7 +836,7 @@ if ($w -gt 0 -and $h -gt 0) {{
                 let _ = app.emit("clipboard-update", serde_json::json!({
                     "id": id,
                     "type": "image",
-                    "content": format!("data:image/png;base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes)),
+                    "content": "",
                     "hash": hash,
                     "timestamp": timestamp,
                     "metadata": {},
@@ -846,9 +850,16 @@ if ($w -gt 0 -and $h -gt 0) {{
 
 #[cfg(target_os = "windows")]
 fn stop_recording() {
+    // Send 'q' to ffmpeg stdin for graceful shutdown (writes moov atom)
+    if let Some(mut stdin) = RECORDING_STDIN.lock().unwrap().take() {
+        let _ = writeln!(stdin, "q");
+        drop(stdin);
+    }
+    // Give ffmpeg time to finalize the output file
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    // Force kill if still running
     let pid = RECORDING_PID.swap(0, Ordering::SeqCst);
     if pid > 0 {
-        // Send 'q' to ffmpeg stdin for clean shutdown instead of taskkill
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         // ffmpeg gdigrab has no visible window so WM_CLOSE (taskkill without /F)
@@ -1011,6 +1022,7 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
         {
             Ok(c) => {
                 RECORDING_PID.store(c.id(), Ordering::SeqCst);
+                *RECORDING_STDIN.lock().unwrap() = c.stdin.take();
                 c
             }
             Err(_) => {

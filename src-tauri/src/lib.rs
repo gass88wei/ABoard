@@ -321,6 +321,48 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .register_uri_scheme_protocol("aboard-file", |ctx, request| {
+            let path = request.uri().path().strip_prefix('/').unwrap_or("");
+            let data_dir = match ctx.app_handle().path().app_data_dir() {
+                Ok(d) => d,
+                Err(_) => {
+                    return http::Response::builder()
+                        .status(http::StatusCode::NOT_FOUND)
+                        .body(Vec::new())
+                        .unwrap();
+                }
+            };
+            let full_path = data_dir.join(path);
+            match std::fs::read(&full_path) {
+                Ok(data) => {
+                    let mime = full_path.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| match e.to_lowercase().as_str() {
+                            "png" => "image/png",
+                            "jpg" | "jpeg" => "image/jpeg",
+                            "gif" => "image/gif",
+                            "bmp" => "image/bmp",
+                            "webp" => "image/webp",
+                            "mp4" => "video/mp4",
+                            "webm" => "video/webm",
+                            "mov" => "video/quicktime",
+                            "avi" => "video/x-msvideo",
+                            _ => "application/octet-stream",
+                        })
+                        .unwrap_or("application/octet-stream");
+                    http::Response::builder()
+                        .header("Content-Type", mime)
+                        .body(data)
+                        .unwrap()
+                }
+                Err(_) => {
+                    http::Response::builder()
+                        .status(http::StatusCode::NOT_FOUND)
+                        .body(Vec::new())
+                        .unwrap()
+                }
+            }
+        })
         .setup(|app| {
             #[cfg(desktop)]
             {
