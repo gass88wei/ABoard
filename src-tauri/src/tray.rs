@@ -716,6 +716,16 @@ fn capture_screenshot<R: Runtime>(app: AppHandle<R>) {
     // avoid DPI-scaling offset. Draws a dashed red rectangle during drag for feedback.
     let script = format!(
         r#"
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class DPIHelper {{
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
+}}
+"@
+[DPIHelper]::SetProcessDPIAware()
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -760,12 +770,10 @@ $form.Add_MouseUp({{
 $form.Add_Paint({{
     param($s,$e)
     if (-not $script:isDragging) {{ return }}
-    $startPt = $s.PointToClient((New-Object System.Drawing.Point($script:startX, $script:startY)))
-    $endPt = $s.PointToClient((New-Object System.Drawing.Point($script:endX, $script:endY)))
-    $x = [Math]::Min($startPt.X, $endPt.X)
-    $y = [Math]::Min($startPt.Y, $endPt.Y)
-    $w = [Math]::Abs($endPt.X - $startPt.X)
-    $h = [Math]::Abs($endPt.Y - $startPt.Y)
+    $x = [Math]::Min($script:startX, $script:endX)
+    $y = [Math]::Min($script:startY, $script:endY)
+    $w = [Math]::Abs($script:endX - $script:startX)
+    $h = [Math]::Abs($script:endY - $script:startY)
     if ($w -gt 0 -and $h -gt 0) {{
         $pen = New-Object System.Drawing.Pen([System.Drawing.Color]::Red, 2)
         $pen.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash
@@ -1015,14 +1023,14 @@ fn start_screen_recording<R: Runtime>(app: AppHandle<R>, record_item: MenuItem<R
         };
 
         let _ = app_clone.emit("recording-status", serde_json::json!({ "active": false }));
-        let status = child.wait();
+        let _ = child.wait();
         RECORDING_PID.store(0, Ordering::SeqCst);
         RECORDING_ACTIVE.store(false, Ordering::SeqCst);
         let resume_text = get_text("screen_recording", &get_stored_locale());
         let _ = record_item_clone.set_text(&resume_text);
 
-        if let Ok(status) = status {
-            if status.success() && dest_path.exists() {
+        // taskkill /F sets non-zero exit code, so check file existence instead
+        if dest_path.exists() && dest_path.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
                 let bytes = match std::fs::read(&dest_path) {
                     Ok(b) => b,
                     Err(_) => return,

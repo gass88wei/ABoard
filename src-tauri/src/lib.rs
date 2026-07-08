@@ -397,17 +397,18 @@ pub fn run() {
             // shows traffic lights without a visible title bar.
             #[cfg(not(target_os = "macos"))]
             {
-                // set_decorations can crash on some Windows Webview2 init sequences;
-                // catch any panic so the app still starts.
-                let set_dec = |label: &str| {
-                    if let Some(win) = app.get_webview_window(label) {
-                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            let _ = win.set_decorations(false);
-                        }));
+                // Defer set_decorations to avoid WebView2 init races.
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    for label in &["main", "floating"] {
+                        if let Some(win) = handle.get_webview_window(label) {
+                            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                let _ = win.set_decorations(false);
+                            }));
+                        }
                     }
-                };
-                set_dec("main");
-                set_dec("floating");
+                });
             }
 
             // Intercept floating window close (red dot) — hide instead of destroy.
