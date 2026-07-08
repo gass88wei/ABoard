@@ -201,42 +201,30 @@ return "OK"
 
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::ffi::OsStrExt;
-        use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
-        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GPTR};
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        let wide_path: Vec<u16> = abs.as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .chain(std::iter::once(0))
-            .collect();
-        let dropfiles_size = 20usize; // sizeof(DROPFILES) with packed(1): u32+POINT(i32,i32)+BOOL+BOOL = 4+8+4+4
-        let total_bytes = dropfiles_size + wide_path.len() * 2;
+        let pow_path = abs.to_str().ok_or("Invalid path")?.replace('\'', "''");
+        let script = format!(
+            "Add-Type -AssemblyName System.Windows.Forms
+$p = New-Object System.Collections.Specialized.StringCollection
+$p.AddRange(@('{path}'))
+[System.Windows.Forms.Clipboard]::SetFileDropList($p)
+Write-Output 'OK'",
+            path = pow_path
+        );
 
-        unsafe {
-            let h = match GlobalAlloc(GPTR, total_bytes) {
-                Ok(h) => h,
-                Err(e) => return Err(format!("GlobalAlloc error: {}", e)),
-            };
-            let p = GlobalLock(h) as *mut u8;
+        let output = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("PowerShell error: {}", e))?;
 
-            // Write DROPFILES header: pFiles at offset 0, fWide at offset 16
-            *(p as *mut u32) = dropfiles_size as u32;
-            // pt (offset 4-11) and fNC (offset 12-15) stay zero-initialized
-            *(p.add(16) as *mut i32) = 1; // fWide = TRUE
-
-            let src = wide_path.as_ptr() as *const u8;
-            std::ptr::copy_nonoverlapping(src, p.add(dropfiles_size), wide_path.len() * 2);
-
-            let _ = GlobalUnlock(h);
-
-            if OpenClipboard(None).is_err()
-                || EmptyClipboard().is_err()
-                || SetClipboardData(15u32, Some(std::mem::transmute::<_, windows::Win32::Foundation::HANDLE>(h))).is_err()
-                || CloseClipboard().is_err()
-            {
-                return Err("Clipboard operation failed".into());
-            }
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stdout != "OK" {
+            return Err(format!("SetFileDropList failed: {} ({})", stdout, stderr));
         }
         Ok(())
     }
