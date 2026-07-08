@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Rust/Cargo
+src-tauri/target/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+ui.html
+ui.png
+app-icon.svg
+.claude/
+
+# Dev tools
+ralph/
+.planning/

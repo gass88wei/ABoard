@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npm run tauri build
+      - name: Build + sign (macOS)
+        if: matrix.os == 'macos-latest'
+        run: npm run build:macos
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: aboard-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: List artifacts
+        run: |
+          ls -la aboard-macos-latest/
+          echo "---"
+          ls -la aboard-windows-latest/
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            aboard-macos-latest/**/*
+            aboard-windows-latest/**/*
+          generate_release_notes: true

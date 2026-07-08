@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Test
+        run: npm run test
+
+  build:
+    needs: frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build Tauri app (Windows)
+        if: matrix.os == 'windows-latest'
+        run: npm run tauri build
+      - name: Build + sign Tauri app (macOS)
+        if: matrix.os == 'macos-latest'
+        run: npm run build:macos
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: aboard-${{ matrix.os }}
+          path: src-tauri/target/release/bundle/
+          retention-days: 5
