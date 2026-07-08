@@ -124,7 +124,8 @@ export default function ClipboardItemCard(props: Props) {
     const c = props.item.content;
     if (resolvedSrc()) return resolvedSrc()!;
     if (c.startsWith("data:")) return c;
-    return c;
+    // aboard-file:// URL not allowed by CSP; onMount will load via read_data_file
+    return "";
   };
 
   onMount(() => {

@@ -201,11 +201,23 @@ return "OK"
 
     #[cfg(target_os = "windows")]
     {
-        // On Windows, copy the file path as text — Explorer will handle file paste
-        use tauri_plugin_clipboard_manager::ClipboardExt;
-        app.clipboard()
-            .write_text(abs.to_string_lossy().into_owned())
-            .map_err(|e| format!("Clipboard write error: {}", e))?;
+        // Copy the actual file to clipboard using CF_HDROP via PowerShell/.NET so
+        // Explorer paste pastes the file (not just the path string).
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let script = format!(
+            r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetFileDropList((New-Object System.Collections.Specialized.StringCollection)@("{}"))"#,
+            abs_str
+        );
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("PowerShell error: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Clipboard set failed: {}", stderr.trim()));
+        }
         Ok(())
     }
 
