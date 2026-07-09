@@ -530,7 +530,7 @@ return ""
 /// Much faster than the PowerShell fallback since no process spawn is needed.
 #[cfg(target_os = "windows")]
 fn try_read_image_direct() -> Option<ClipboardItem> {
-    use clipboard_win::formats;
+    use clipboard_win::{formats, Getter};
 
     // Try DIBV5 first (richer format, used by Win+Shift+S), fall back to DIB
     let mut buf = Vec::new();
