@@ -356,7 +356,10 @@ fn try_read_image<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<ClipboardItem
                 return None;
             }
 
-            return encode_and_build_item(&rgba, w, h);
+            if let Some(item) = encode_and_build_item(&rgba, w, h) {
+                return Some(item);
+            }
+            eprintln!("[clipboard] Tauri read_image succeeded but encode failed, falling through to platform fallback");
         }
         Err(e) => {
             eprintln!("[clipboard] [DEBUG] read_image err: {:?}", e);
