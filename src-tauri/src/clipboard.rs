@@ -26,6 +26,11 @@ pub(crate) static MONITORING_PAUSED: AtomicBool = AtomicBool::new(false);
 /// (e.g., after copy_file_to_clipboard for video paste).
 pub(crate) static CLIPBOARD_OWNED: AtomicBool = AtomicBool::new(false);
 
+/// Transient flag: set just before CLIPBOARD_OWNED is released,
+/// causes the monitor to skip one extra poll to avoid re-capturing
+/// our own SetFileDropList content as a new entry.
+pub(crate) static CLIPBOARD_JUST_RELEASED: AtomicBool = AtomicBool::new(false);
+
 /// The type of content stored in the clipboard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "content")]
@@ -123,6 +128,13 @@ pub fn start_monitoring<R: Runtime>(app: tauri::AppHandle<R>) {
 
             // If we just set clipboard content ourselves (video paste), skip this poll
             if CLIPBOARD_OWNED.load(Ordering::SeqCst) {
+                continue;
+            }
+
+            // Skip one extra poll after releasing OWNED to avoid re-capturing
+            // our own SetFileDropList as a new clipboard entry.
+            if CLIPBOARD_JUST_RELEASED.load(Ordering::SeqCst) {
+                CLIPBOARD_JUST_RELEASED.store(false, Ordering::SeqCst);
                 continue;
             }
 
@@ -351,14 +363,13 @@ fn try_read_image<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<ClipboardItem
         }
     }
 
-    // Method 2: Windows: detect DIB/DIBV5 format (screenshots) then use PowerShell
+    // Method 2: Windows: Tauri plugin failed — try PowerShell fallback
+    // (handles DIB/DIBV5 screenshots, file paths from Explorer, etc.)
     #[cfg(target_os = "windows")]
     {
-        if has_dib_on_clipboard() {
-            eprintln!("[clipboard] DIB/DIBV5 detected, using PowerShell fallback");
-            if let Some(item) = try_read_image_fallback() {
-                return Some(item);
-            }
+        eprintln!("[clipboard] Tauri image read failed, trying PowerShell fallback");
+        if let Some(item) = try_read_image_fallback() {
+            return Some(item);
         }
     }
 
@@ -565,7 +576,7 @@ if ($img) {{
     );
 
     let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
@@ -595,7 +606,7 @@ if ($files.Count -gt 0) {
 }
 "#;
     let file_output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", file_script])
+        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", file_script])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;

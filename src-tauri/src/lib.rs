@@ -174,10 +174,11 @@ fn copy_file_to_clipboard(file_path: String, app: tauri::AppHandle) -> Result<()
         return Err(format!("File not found: {}", full_path.display()));
     }
     let abs = full_path.canonicalize().map_err(|e| format!("Canonicalize error: {}", e))?;
-    let abs_str = abs.to_str().ok_or("Invalid path")?.replace('\\', "\\\\");
+    let abs_str = abs.to_str().ok_or("Invalid path")?;
 
     #[cfg(target_os = "macos")]
     {
+        let escaped = abs_str.replace('\\', "\\\\");
         let script = format!(r#"
 use framework "AppKit"
 set pb to current application's NSPasteboard's generalPasteboard()
@@ -185,7 +186,7 @@ pb's clearContents()
 set fileURL to current application's NSURL's fileURLWithPath:"{path}"
 pb's writeObjects:{{fileURL}}
 return "OK"
-"#, path = abs_str);
+"#, path = escaped);
         let output = std::process::Command::new("osascript")
             .arg("-e")
             .arg(&script)
@@ -208,7 +209,8 @@ return "OK"
         // Prevent clipboard monitor from overwriting our CF_HDROP
         clipboard::CLIPBOARD_OWNED.store(true, std::sync::atomic::Ordering::SeqCst);
 
-        let pow_path = abs.to_str().ok_or("Invalid path")?.replace('\'', "''");
+        let clean = abs_str.strip_prefix(r"\\?\").unwrap_or(abs_str);
+        let pow_path = clean.replace('\'', "''");
         let script = format!(
             "Add-Type -AssemblyName System.Windows.Forms
 $p = New-Object System.Collections.Specialized.StringCollection
@@ -219,7 +221,7 @@ Write-Output 'OK'",
         );
 
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("PowerShell error: {}", e))?;
@@ -236,9 +238,11 @@ Write-Output 'OK'",
         }
         eprintln!("[copy] PowerShell SetFileDropList OK: path='{}'", pow_path);
 
-        // Release the lock after 3 seconds — gives user time to paste in Explorer
+        // Release the lock after 3 seconds — gives user time to paste in Explorer.
+        // Set JUST_RELEASED before releasing OWNED so the monitor skips one extra poll.
         let _ = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(3));
+            clipboard::CLIPBOARD_JUST_RELEASED.store(true, std::sync::atomic::Ordering::SeqCst);
             clipboard::CLIPBOARD_OWNED.store(false, std::sync::atomic::Ordering::SeqCst);
         });
         Ok(())
