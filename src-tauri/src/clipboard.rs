@@ -366,26 +366,14 @@ fn try_read_image<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<ClipboardItem
         }
     }
 
-    // Method 2: Windows: try direct DIB/DIBV5 reader (handles Win+Shift+S)
-    #[cfg(target_os = "windows")]
+    // Method 2: Platform-specific fallback for apps that Tauri can't read
+    #[cfg(target_os = "macos")]
     {
-        eprintln!("[clipboard] Tauri image read failed, trying direct DIB reader");
-        if let Some(item) = try_read_dib() {
-            return Some(item);
-        }
-    }
-
-    // Method 3: Windows: PowerShell fallback (handles file paths from Explorer, etc.)
-    #[cfg(target_os = "windows")]
-    {
-        eprintln!("[clipboard] Direct DIB reader failed, trying PowerShell fallback");
         if let Some(item) = try_read_image_fallback() {
             return Some(item);
         }
     }
-
-    // Method 4: Platform-specific fallback for apps that Tauri can't read
-    #[cfg(target_os = "macos")]
+    #[cfg(target_os = "windows")]
     {
         if let Some(item) = try_read_image_fallback() {
             return Some(item);
@@ -553,71 +541,6 @@ return ""
     None
 }
 
-/// Windows: read DIB/DIBV5 image data directly from clipboard using clipboard_win.
-/// Bypasses both arboard (Tauri plugin) and PowerShell, handling Win+Shift+S
-/// screenshots that only put CF_DIBV5 on the clipboard.
-#[cfg(target_os = "windows")]
-fn try_read_dib() -> Option<ClipboardItem> {
-    use clipboard_win::{formats, get_clipboard};
-
-    // Try DIBV5 first (Win+Shift+S), fall back to DIB
-    let dib_data = get_clipboard(formats::RawData(formats::CF_DIBV5))
-        .or_else(|_| get_clipboard(formats::RawData(formats::CF_DIB)))
-        .ok()?;
-
-    if dib_data.len() < 40 {
-        return None;
-    }
-
-    let bi_size = u32::from_le_bytes(dib_data[0..4].try_into().ok()?);
-    if bi_size < 40 {
-        return None;
-    }
-
-    let width = i32::from_le_bytes(dib_data[4..8].try_into().ok()?);
-    let height = i32::from_le_bytes(dib_data[8..12].try_into().ok()?);
-    let bit_count = u16::from_le_bytes(dib_data[14..16].try_into().ok()?);
-    let compression = u32::from_le_bytes(dib_data[16..20].try_into().ok()?);
-
-    if width <= 0 || height == 0 || bit_count < 24 {
-        return None;
-    }
-
-    // Calculate pixel data offset within the DIB blob
-    let pixel_offset: usize = match (bi_size, compression) {
-        // BITMAPINFOHEADER + BI_BITFIELDS: 3 DWORD masks follow header
-        (40, 3) => 40usize + 12,
-        // BITMAPV4HEADER (108) / BITMAPV5HEADER (124): masks included
-        (s, _) if s >= 108 => s as usize,
-        // Standard BITMAPINFOHEADER (no extra masks)
-        (s, _) => s as usize,
-    };
-
-    let abs_w = width.unsigned_abs();
-    let abs_h = height.unsigned_abs();
-    let row_stride = ((bit_count as u32 * abs_w + 31) / 32) * 4;
-
-    if dib_data.len() < pixel_offset + (row_stride * abs_h) as usize {
-        return None;
-    }
-
-    // Wrap DIB in a BMP file: BITMAPFILEHEADER (14) + DIB data
-    let bmp_size = 14u32 + dib_data.len() as u32;
-    let mut bmp = Vec::with_capacity(14 + dib_data.len());
-    bmp.extend_from_slice(b"BM");
-    bmp.extend_from_slice(&bmp_size.to_le_bytes());
-    bmp.extend_from_slice(&[0u8; 4]);
-    bmp.extend_from_slice(&(14u32 + pixel_offset as u32).to_le_bytes());
-    bmp.extend_from_slice(&dib_data);
-
-    let tmp = std::env::temp_dir().join("aboard_dib.bmp");
-    std::fs::write(&tmp, &bmp).ok()?;
-    let tmp_str = tmp.to_str()?.to_string();
-    let result = read_image_file(&tmp_str);
-    let _ = std::fs::remove_file(&tmp);
-    result
-}
-
 /// Windows fallback: read image via PowerShell System.Windows.Forms.
 /// Tries clipboard image first, then falls back to file path from Explorer copy.
 #[cfg(target_os = "windows")]
@@ -630,40 +553,30 @@ fn try_read_image_fallback() -> Option<ClipboardItem> {
     let tmp = std::env::temp_dir().join("aboard_clip.png");
     let tmp_str = tmp.to_str()?;
 
-    // Single quotes in PowerShell are verbatim — paths with backslashes don't need escaping.
-    // Only single-quote characters in the path need to be doubled ('').
-    let escaped_path = tmp_str.replace('\'', "''");
     let script = format!(
         r#"
 Add-Type -AssemblyName System.Windows.Forms
 $img = [System.Windows.Forms.Clipboard]::GetImage()
 if ($img) {{
-    $img.Save('{path}', [System.Drawing.Imaging.ImageFormat]::Png)
+    $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png)
     Write-Output 'OK'
 }}"#,
-        path = escaped_path
+        tmp_str.replace('\\', "\\\\")
     );
 
     let output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", &script])
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
 
     let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !stderr.is_empty() {
-        eprintln!("[clipboard] PowerShell GetImage stderr: {}", stderr);
-    }
     if result == "OK" && tmp.exists() {
         if let Some(item) = read_image_file(tmp_str) {
             let _ = std::fs::remove_file(&tmp);
             return Some(item);
         }
-        eprintln!("[clipboard] PowerShell saved temp file but read_image_file failed");
         let _ = std::fs::remove_file(&tmp);
-    } else if !result.is_empty() {
-        eprintln!("[clipboard] PowerShell GetImage unexpected output: '{}'", result);
     }
 
     // Method 2: Try file path from Explorer (FileDrop format)
@@ -675,7 +588,7 @@ if ($files.Count -gt 0) {
 }
 "#;
     let file_output = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", file_script])
+        .args(["-NoProfile", "-NonInteractive", "-Command", file_script])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
