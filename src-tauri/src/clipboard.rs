@@ -366,7 +366,15 @@ fn try_read_image<R: Runtime>(app: &tauri::AppHandle<R>) -> Option<ClipboardItem
         }
     }
 
-    // Method 2: Platform-specific fallback for apps that Tauri can't read
+    // Method 2: Windows: direct CF_DIBV5/CF_DIB reader via Win32 API
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(item) = try_read_dib() {
+            return Some(item);
+        }
+    }
+
+    // Method 3: Platform-specific fallback for apps that Tauri can't read
     #[cfg(target_os = "macos")]
     {
         if let Some(item) = try_read_image_fallback() {
@@ -441,6 +449,93 @@ fn read_image_file(path: &str) -> Option<ClipboardItem> {
     let (w, h) = rgba.dimensions();
 
     encode_and_build_item(&rgba, w, h)
+}
+
+/// Windows: read DIB/DIBV5 image data directly from clipboard via Win32 API.
+/// Uses `windows` crate for direct CF_DIBV5/CF_DIB access, bypassing arboard
+/// (which only handles CF_DIB) and PowerShell (which can't read CF_DIBV5).
+/// This captures Win+Shift+S screenshots that only put CF_DIBV5 on the clipboard.
+#[cfg(target_os = "windows")]
+fn try_read_dib() -> Option<ClipboardItem> {
+    use windows::Win32::System::DataExchange::*;
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalSize};
+    use windows::Win32::Foundation::HWND;
+
+    unsafe {
+        if OpenClipboard(HWND::default()).as_bool() == false {
+            return None;
+        }
+
+        let mut handle = GetClipboardData(CF_DIBV5);
+        if handle.0.is_null() {
+            handle = GetClipboardData(CF_DIB);
+        }
+        if handle.0.is_null() {
+            CloseClipboard();
+            return None;
+        }
+
+        let ptr = GlobalLock(handle);
+        if ptr.is_null() {
+            CloseClipboard();
+            return None;
+        }
+
+        let size = GlobalSize(handle) as usize;
+        if size < 40 {
+            GlobalUnlock(handle);
+            CloseClipboard();
+            return None;
+        }
+
+        let dib_data = std::slice::from_raw_parts(ptr as *const u8, size).to_vec();
+        GlobalUnlock(handle);
+        CloseClipboard();
+
+        let bi_size = u32::from_le_bytes(dib_data[0..4].try_into().ok()?);
+        let bit_count = u16::from_le_bytes(dib_data[14..16].try_into().ok()?);
+        let compression = u32::from_le_bytes(dib_data[16..20].try_into().ok()?);
+
+        if bi_size < 40 || bit_count < 24 {
+            return None;
+        }
+
+        let pixel_offset: usize = if bi_size >= 108 {
+            bi_size as usize
+        } else {
+            let mut off = bi_size as usize;
+            if compression == 3 {
+                off += 12;
+            }
+            if bit_count <= 8 {
+                let colors = if dib_data.len() >= 36 {
+                    let used = u32::from_le_bytes(dib_data[32..36].try_into().unwrap_or(0u32.to_le_bytes()));
+                    if used > 0 { used as usize } else { 1usize << bit_count }
+                } else {
+                    1usize << bit_count
+                };
+                off += colors * 4;
+            }
+            off
+        };
+
+        let bf_off_bits = 14u32 + pixel_offset as u32;
+        let bf_size = 14u32 + dib_data.len() as u32;
+
+        let mut bmp = Vec::with_capacity(bf_size as usize);
+        bmp.extend_from_slice(b"BM");
+        bmp.extend_from_slice(&bf_size.to_le_bytes());
+        bmp.extend_from_slice(&[0u8; 4]);
+        bmp.extend_from_slice(&bf_off_bits.to_le_bytes());
+        bmp.extend_from_slice(&dib_data);
+
+        let tmp = std::env::temp_dir().join("aboard_dib.bmp");
+        std::fs::write(&tmp, &bmp).ok()?;
+        let tmp_str = tmp.to_str()?.to_string();
+        let result = read_image_file(&tmp_str);
+        let _ = std::fs::remove_file(&tmp);
+        result
+    }
 }
 
 /// macOS fallback: read image from clipboard via AppleScriptObjC + NSPasteboard.
