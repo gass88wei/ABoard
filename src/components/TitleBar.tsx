@@ -1,4 +1,5 @@
 import { Show, onMount, createSignal, onCleanup } from "solid-js";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { searchQuery, setSearchQuery, searchHistory, semanticSearchHistory, loadHistory, monitoringPaused } from "../stores/clipboard";
 import { t } from "../stores/i18n";
@@ -110,11 +111,17 @@ export default function TitleBar(props: Props) {
       {/* Right side controls */}
       <div class="flex items-center gap-1 shrink-0" data-tauri-no-drag>
         <Show when={isMac}>
+          <button class="window-btn" onClick={() => invoke("open_data_folder")} title={t("settings.openDataFolder")}>
+            <i class="ph ph-folder-open text-sm" />
+          </button>
           <button class="window-btn" onClick={props.onOpenSettings} title="Settings">
             <i class="ph ph-gear text-sm" />
           </button>
         </Show>
         <Show when={!isMac}>
+          <button class="window-btn" onClick={() => invoke("open_data_folder")} title={t("settings.openDataFolder")}>
+            <i class="ph ph-folder-open text-sm" />
+          </button>
           <button class="window-btn" onClick={props.onOpenSettings} title="Settings">
             <i class="ph ph-gear text-sm" />
           </button>

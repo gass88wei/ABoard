@@ -98,6 +98,8 @@ const t_map: Translations = {
   "settings.theme.dark": { zh: "深色", en: "Dark" },
   "settings.theme.light": { zh: "浅色", en: "Light" },
   "settings.shortcuts": { zh: "快捷键", en: "Shortcuts" },
+  "settings.dataFolder": { zh: "数据文件夹", en: "Data Folder" },
+  "settings.openDataFolder": { zh: "打开数据文件夹", en: "Open Data Folder" },
   "settings.about": { zh: "关于", en: "About" },
   "settings.aboutVersion": { zh: "ABoard", en: "ABoard" },
   "settings.aboutDesc": { zh: "智能剪贴板管理器，内置 AI", en: "Smart clipboard manager with AI" },

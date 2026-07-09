@@ -839,13 +839,19 @@ export default function SettingsPanel(props: Props) {
                           setImporting(false);
                         }
                       }}
-                    >{importing() ? "..." : t("settings.restoreBackup")}</button>
+                      >{importing() ? "..." : t("settings.restoreBackup")}</button>
                     <Show when={exportMessage() || importMessage()}>
                       <p class="text-[10px] mt-1 text-center" classList={{
                         "text-green-500": !(exportMessage() || importMessage()).startsWith("Error"),
                         "text-red-500": (exportMessage() || importMessage()).startsWith("Error"),
                       }}>{exportMessage() || importMessage()}</p>
                     </Show>
+                    <button onClick={() => invoke("open_data_folder")}
+                      class="w-full mt-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors bg-white/60 hover:bg-white/80 border border-gray-200 dark:bg-gray-600/60 dark:hover:bg-gray-500/60 dark:border-gray-500 text-gray-600 dark:text-gray-300 flex items-center justify-center gap-1"
+                    >
+                      <i class="ph ph-folder-open text-sm" />
+                      {t("settings.openDataFolder")}
+                    </button>
                   </div>
                 </div>
               </div>

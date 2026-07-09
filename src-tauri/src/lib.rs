@@ -223,9 +223,14 @@ Write-Output 'OK'",
 
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !stderr.is_empty() {
+            eprintln!("[copy] PowerShell SetFileDropList stderr: {}", stderr);
+        }
         if stdout != "OK" {
+            eprintln!("[copy] PowerShell SetFileDropList failed: stdout='{}' stderr='{}' path='{}'", stdout, stderr, pow_path);
             return Err(format!("SetFileDropList failed: {} ({})", stdout, stderr));
         }
+        eprintln!("[copy] PowerShell SetFileDropList OK: path='{}'", pow_path);
         Ok(())
     }
 
@@ -255,6 +260,30 @@ fn reveal_in_folder(app: tauri::AppHandle, file_path: String) -> Result<(), Stri
             .arg(format!("/select,{}", full_path.display()))
             .spawn()
             .map_err(|e| format!("Failed to open Explorer: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Open the app's data folder in the system file manager (Explorer / Finder).
+#[tauri::command]
+fn open_data_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| format!("{:?}", e))?;
+    let data_dir = app_data_dir.join("data");
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&data_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open Explorer: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&data_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open Finder: {}", e))?;
     }
     Ok(())
 }
@@ -491,6 +520,7 @@ pub fn run() {
             open_url,
             copy_image_to_clipboard,
             copy_file_to_clipboard,
+            open_data_folder,
             show_main_window,
             emit_open_settings,
             clipboard::toggle_monitoring,
