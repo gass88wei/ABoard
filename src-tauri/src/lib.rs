@@ -205,6 +205,9 @@ return "OK"
         use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+        // Prevent clipboard monitor from overwriting our CF_HDROP
+        clipboard::CLIPBOARD_OWNED.store(true, std::sync::atomic::Ordering::SeqCst);
+
         let pow_path = abs.to_str().ok_or("Invalid path")?.replace('\'', "''");
         let script = format!(
             "Add-Type -AssemblyName System.Windows.Forms
@@ -228,9 +231,16 @@ Write-Output 'OK'",
         }
         if stdout != "OK" {
             eprintln!("[copy] PowerShell SetFileDropList failed: stdout='{}' stderr='{}' path='{}'", stdout, stderr, pow_path);
+            clipboard::CLIPBOARD_OWNED.store(false, std::sync::atomic::Ordering::SeqCst);
             return Err(format!("SetFileDropList failed: {} ({})", stdout, stderr));
         }
         eprintln!("[copy] PowerShell SetFileDropList OK: path='{}'", pow_path);
+
+        // Release the lock after 3 seconds — gives user time to paste in Explorer
+        let _ = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            clipboard::CLIPBOARD_OWNED.store(false, std::sync::atomic::Ordering::SeqCst);
+        });
         Ok(())
     }
 

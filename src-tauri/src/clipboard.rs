@@ -22,6 +22,10 @@ const POLL_INTERVAL_MS: u64 = 200;
 /// Global flag for pausing/resuming clipboard monitoring.
 pub(crate) static MONITORING_PAUSED: AtomicBool = AtomicBool::new(false);
 
+/// Flag to prevent clipboard monitor from overwriting content we just set
+/// (e.g., after copy_file_to_clipboard for video paste).
+pub(crate) static CLIPBOARD_OWNED: AtomicBool = AtomicBool::new(false);
+
 /// The type of content stored in the clipboard.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "content")]
@@ -114,6 +118,11 @@ pub fn start_monitoring<R: Runtime>(app: tauri::AppHandle<R>) {
 
             // Check if monitoring is paused
             if MONITORING_PAUSED.load(Ordering::SeqCst) {
+                continue;
+            }
+
+            // If we just set clipboard content ourselves (video paste), skip this poll
+            if CLIPBOARD_OWNED.load(Ordering::SeqCst) {
                 continue;
             }
 
@@ -541,15 +550,18 @@ fn try_read_image_fallback() -> Option<ClipboardItem> {
     let tmp = std::env::temp_dir().join("aboard_clip.png");
     let tmp_str = tmp.to_str()?;
 
+    // Single quotes in PowerShell are verbatim — paths with backslashes don't need escaping.
+    // Only single-quote characters in the path need to be doubled ('').
+    let escaped_path = tmp_str.replace('\'', "''");
     let script = format!(
         r#"
 Add-Type -AssemblyName System.Windows.Forms
 $img = [System.Windows.Forms.Clipboard]::GetImage()
 if ($img) {{
-    $img.Save('{}', [System.Drawing.Imaging.ImageFormat]::Png)
+    $img.Save('{path}', [System.Drawing.Imaging.ImageFormat]::Png)
     Write-Output 'OK'
 }}"#,
-        tmp_str.replace('\\', "\\\\")
+        path = escaped_path
     );
 
     let output = Command::new("powershell")
